@@ -1,3 +1,5 @@
+<img width="1242" height="581" alt="2026-08-15 12 55 01  c7961e8f182a" src="https://github.com/user-attachments/assets/f684a40a-75bd-428f-a6de-2f94828d9b18" />
+<img width="1638" height="1294" alt="2026-08-15 12 55 45 aistudio google com 58499b226f79" src="https://github.com/user-attachments/assets/49d8d0d2-143c-449d-ad08-d64be2747f88" />
 # Laichat v0.1.0
 
 Laichat lets you orchestrate multiple AI assistants (ChatGPT, Claude, Gemini, DeepSeek, Kimi, MiniMax, Qwen, Grok) side‑by‑side, each with a defined role (CEO, PM, Programmer, etc.). Messages are routed between panels via Tampermonkey shared storage — no APIs, no iframes.
