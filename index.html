@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Laichat – AI Collaboration Hub</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+        }
+        body {
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            padding: 24px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            background: linear-gradient(135deg, #f0f6fc, #8b949e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        .sub {
+            color: #8b949e;
+            margin-bottom: 28px;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .role-manager {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .role-manager button {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 0;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .role-manager button:hover {
+            background: #30363d;
+        }
+        .role-manager button.primary {
+            background: #238636;
+            color: #fff;
+        }
+        .role-manager button.primary:hover {
+            background: #2ea043;
+        }
+        .role-manager button.danger {
+            background: #da3633;
+            color: #fff;
+        }
+        .role-manager button.danger:hover {
+            background: #f85149;
+        }
+        .role-manager button.outline {
+            background: transparent;
+            border: 1px solid #30363d;
+        }
+        .role-manager button.outline:hover {
+            background: #21262d;
+        }
+        .panel-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+        .panel-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            padding: 18px 16px 16px;
+            position: relative;
+        }
+        .panel-card .remove-btn {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            font-size: 18px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .panel-card .remove-btn:hover {
+            color: #f85149;
+        }
+        .panel-card label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-bottom: 4px;
+        }
+        .panel-card select {
+            width: 100%;
+            padding: 8px 10px;
+            background: #0d1117;
+            color: #e6edf3;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            outline: none;
+        }
+        .panel-card select:focus {
+            border-color: #58a6ff;
+        }
+        .panel-card .open-btn {
+            width: 100%;
+            margin-top: 12px;
+            padding: 8px;
+            background: #238636;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .panel-card .open-btn:hover {
+            background: #2ea043;
+        }
+        .panel-card .panel-id {
+            font-size: 11px;
+            color: #484f58;
+            margin-top: 6px;
+            text-align: right;
+        }
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .actions button {
+            padding: 10px 20px;
+            border: 0;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            background: #21262d;
+            color: #c9d1d9;
+            transition: background 0.15s;
+        }
+        .actions button:hover {
+            background: #30363d;
+        }
+        .actions button.primary {
+            background: #1f6feb;
+            color: #fff;
+        }
+        .actions button.primary:hover {
+            background: #388bfd;
+        }
+        .status {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 14px 18px;
+            color: #8b949e;
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .status .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        .status .dot.green {
+            background: #3fb950;
+        }
+        .status .dot.gray {
+            background: #484f58;
+        }
+        .status .meta {
+            margin-left: auto;
+            font-size: 12px;
+            color: #484f58;
+        }
+        .footnote {
+            margin-top: 16px;
+            font-size: 13px;
+            color: #484f58;
+            text-align: center;
+            border-top: 1px solid #21262d;
+            padding-top: 16px;
+        }
+        .footnote kbd {
+            background: #21262d;
+            padding: 1px 6px;
+            border-radius: 4px;
+            color: #c9d1d9;
+        }
+        /* ─── ROLE EDITOR MODAL ─────────────────────────────────────────── */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            backdrop-filter: blur(4px);
+        }
+        .modal-overlay.hidden {
+            display: none;
+        }
+        .modal-box {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            max-width: 860px;
+            width: 100%;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+        }
+        .modal-box h2 {
+            margin: 0 0 4px 0;
+            font-weight: 600;
+        }
+        .modal-box .subtitle {
+            color: #8b949e;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+        .role-editor-list {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            border: 1px solid #21262d;
+            border-radius: 8px;
+            padding: 8px;
+            background: #161b22;
+            max-height: 50vh;
+        }
+        .role-editor-item {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px 8px;
+            border-bottom: 1px solid #21262d;
+        }
+        .role-editor-item:last-child {
+            border-bottom: none;
+        }
+        .role-editor-item .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .role-editor-item .row input {
+            flex: 1;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: #e6edf3;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .role-editor-item .row input:focus {
+            border-color: #58a6ff;
+            outline: none;
+        }
+        .role-editor-item .row button {
+            background: transparent;
+            border: none;
+            color: #8b949e;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+        .role-editor-item .row button:hover {
+            color: #f85149;
+        }
+        .role-editor-item textarea {
+            width: 100%;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 10px;
+            color: #e6edf3;
+            font: 13px/1.5 monospace;
+            resize: vertical;
+            min-height: 60px;
+        }
+        .role-editor-item textarea:focus {
+            border-color: #58a6ff;
+            outline: none;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid #21262d;
+            padding-top: 16px;
+        }
+        .modal-actions .left {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .modal-actions button {
+            padding: 8px 16px;
+            border: 0;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .modal-actions button.primary {
+            background: #238636;
+            color: #fff;
+        }
+        .modal-actions button.primary:hover {
+            background: #2ea043;
+        }
+        .modal-actions button.secondary {
+            background: #21262d;
+            color: #c9d1d9;
+        }
+        .modal-actions button.secondary:hover {
+            background: #30363d;
+        }
+        .modal-actions button.danger {
+            background: #da3633;
+            color: #fff;
+        }
+        .modal-actions button.danger:hover {
+            background: #f85149;
+        }
+        .modal-actions button.outline {
+            background: transparent;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+        }
+        .modal-actions button.outline:hover {
+            background: #21262d;
+        }
+        @media (max-width: 640px) {
+            .panel-grid {
+                grid-template-columns: 1fr;
+            }
+            .actions {
+                flex-direction: column;
+            }
+            .modal-box {
+                padding: 16px;
+            }
+            .role-editor-item .row {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 Laichat</h1>
+        <div class="sub">
+            <span>Multi‑panel AI orchestration with roles and routing.</span>
+            <div class="role-manager">
+                <button class="primary" id="editRolesBtn">📝 Edit Roles</button>
+                <button id="resetRolesBtn" title="Reset to default roles">↺ Reset</button>
+                <button class="outline" id="exportJsonBtn">📥 Export JSON</button>
+                <button class="outline" id="importJsonBtn">📂 Import JSON</button>
+                <input type="file" id="importFileInput" accept=".json" style="display:none">
+            </div>
+        </div>
+
+        <div class="panel-grid" id="panelGrid"></div>
+
+        <div class="actions">
+            <button class="primary" id="addPanelBtn">+ Add Panel</button>
+            <button id="copyScriptBtn">📋 Copy Userscript</button>
+        </div>
+
+        <div class="status" id="statusBar">
+            <span class="dot gray" id="statusDot"></span>
+            <span id="statusText">Add a panel and click "Open" to launch an AI.</span>
+            <span class="meta" id="statusMeta"></span>
+        </div>
+
+        <div class="footnote">
+            Each panel opens a new browser tab. Arrange them manually (macOS: hold <kbd>⌥</kbd> while clicking the green window button).
+            <br>Roles are stored in <kbd>localStorage</kbd> and shared with the userscript. Edit them in the Role Editor.
+        </div>
+    </div>
+
+    <!-- ─── ROLE EDITOR MODAL ──────────────────────────────────────────── -->
+    <div class="modal-overlay hidden" id="roleEditorOverlay">
+        <div class="modal-box">
+            <h2>📝 Role Editor</h2>
+            <div class="subtitle">Define the system prompt for each role. These override the built‑in defaults.</div>
+            <div class="role-editor-list" id="roleEditorList"></div>
+            <div class="modal-actions">
+                <div class="left">
+                    <button class="secondary" id="addRoleEditorBtn">+ Add Role</button>
+                    <button class="outline" id="resetDefaultsBtn">Restore Defaults</button>
+                </div>
+                <div>
+                    <button class="secondary" id="closeEditorBtn">Cancel</button>
+                    <button class="primary" id="saveEditorBtn">💾 Save Roles</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ─── CONFIG ──────────────────────────────────────────────────────────
+        const AI_URLS = {
+            chatgpt: 'https://chatgpt.com/',
+            claude: 'https://claude.ai/',
+            gemini: 'https://aistudio.google.com/',
+            deepseek: 'https://chat.deepseek.com/',
+            kimi: 'https://kimi.moonshot.cn/',
+            minimax: 'https://chat.minimaxi.com/',
+            qwen: 'https://chat.qwen.ai/',
+            grok: 'https://grok.com/'
+        };
+        const AI_LABELS = {
+            chatgpt: 'ChatGPT',
+            claude: 'Claude',
+            gemini: 'Gemini',
+            deepseek: 'DeepSeek',
+            kimi: 'Kimi',
+            minimax: 'MiniMax',
+            qwen: 'Qwen',
+            grok: 'Grok'
+        };
+
+        // ─── DEFAULT STRICT ROLES (built‑in fallback) ──────────────────────
+        const DEFAULT_ROLES_DATA = [{
+            name: 'Critical Reviewer',
+            prompt: `You are the Critical Reviewer (Red Team). RULES: 1) Max 200 words. 2) ONLY list defects, edge cases, security flaws, performance bottlenecks. 3) DO NOT propose solutions or write code. 4) Stick EXACTLY to the provided code. 5) Flag only what is broken or missing. Format: Bullet points. No fluff.`
+        }, {
+            name: 'Solution Architect',
+            prompt: `You are the Solution Architect (Blue Team). RULES: 1) Max 200 words. 2) Synthesize the reviewer's findings into a minimal step‑by‑step fix plan. 3) DO NOT write code. 4) Do not add new features. 5) Prioritise the simplest path. Format: Numbered steps. No fluff.`
+        }, {
+            name: 'Precise Programmer',
+            prompt: `You are the Precise Programmer. RULES: 1) Output ONLY the exact code changes (diff or full file). 2) Do NOT add extra features, comments, or tests unless asked. 3) Do NOT refactor unrelated code. 4) Strictly implement the architect's plan. Format: Code blocks only. No explanations.`
+        }, {
+            name: 'CEO',
+            prompt: `You are the CEO. Set vision, make high‑level decisions, approve strategies. Communicate clearly and decisively. Max 200 words.`
+        }, {
+            name: 'Software PM',
+            prompt: `You are the Software PM. Manage roadmap, prioritise features, coordinate teams. Ask clarifying questions. Max 200 words.`
+        }, {
+            name: 'Programmer',
+            prompt: `You are the Programmer. Write clean, efficient code. Explain technical details and implement solutions. Practical and precise. Max 200 words.`
+        }, {
+            name: 'Reviewer',
+            prompt: `You are the Reviewer. Critically evaluate code, designs, plans. Identify issues, suggest improvements. Max 200 words.`
+        }, {
+            name: 'QA',
+            prompt: `You are the QA Engineer. Test thoroughly, find bugs, think about edge cases. Max 200 words.`
+        }, {
+            name: 'Designer',
+            prompt: `You are the Designer. Focus on UX, visual design, usability. Propose mockups. Max 200 words.`
+        }, {
+            name: 'DevOps',
+            prompt: `You are the DevOps Engineer. Manage infrastructure, CI/CD, deployment, monitoring. Ensure scalability, security. Max 200 words.`
+        }];
+
+        const DEFAULT_NAMES = DEFAULT_ROLES_DATA.map(r => r.name);
+
+        // ─── ROLE LIBRARY STORAGE ─────────────────────────────────────────
+        function loadRoleLibrary() {
+            const stored = localStorage.getItem('laichat.roleLibrary');
+            if (stored) {
+                try {
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed) && parsed.length) return parsed;
+                } catch (_) {}
+            }
+            // Merge defaults with any custom roles that might exist
+            return JSON.parse(JSON.stringify(DEFAULT_ROLES_DATA));
+        }
+
+        function saveRoleLibrary(roles) {
+            localStorage.setItem('laichat.roleLibrary', JSON.stringify(roles));
+        }
+
+        function getAllRoleNames() {
+            const lib = loadRoleLibrary();
+            return lib.map(r => r.name);
+        }
+
+        // ─── PANEL STATE ────────────────────────────────────────────────────
+        let panels = [];
+
+        function savePanels() {
+            localStorage.setItem('laichat.panels', JSON.stringify(panels));
+        }
+
+        function loadPanels() {
+            const stored = localStorage.getItem('laichat.panels');
+            if (stored) {
+                try { panels = JSON.parse(stored); } catch (_) { panels = []; }
+            }
+            if (!panels.length) {
+                panels = [
+                    { id: 'panel-1', ai: 'chatgpt', role: 'Critical Reviewer' },
+                    { id: 'panel-2', ai: 'claude', role: 'Solution Architect' },
+                    { id: 'panel-3', ai: 'deepseek', role: 'Precise Programmer' }
+                ];
+                savePanels();
+            }
+        }
+
+        function generateId() {
+            return 'panel-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+        }
+
+        // ─── RENDER UI ──────────────────────────────────────────────────────
+        const grid = document.getElementById('panelGrid');
+        const statusText = document.getElementById('statusText');
+        const statusDot = document.getElementById('statusDot');
+        const statusMeta = document.getElementById('statusMeta');
+
+        function renderPanels() {
+            const roles = getAllRoleNames();
+            grid.innerHTML = '';
+            panels.forEach((p) => {
+                const card = document.createElement('div');
+                card.className = 'panel-card';
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'remove-btn';
+                removeBtn.textContent = '✕';
+                removeBtn.title = 'Remove panel';
+                removeBtn.onclick = () => {
+                    if (panels.length <= 1) {
+                        statusText.textContent = '⚠️ Keep at least one panel.';
+                        return;
+                    }
+                    panels = panels.filter(pp => pp.id !== p.id);
+                    savePanels();
+                    renderPanels();
+                    updateStatus();
+                };
+                card.appendChild(removeBtn);
+
+                const aiLabel = document.createElement('label');
+                aiLabel.textContent = 'AI Model';
+                card.appendChild(aiLabel);
+
+                const aiSelect = document.createElement('select');
+                for (const [key, label] of Object.entries(AI_LABELS)) {
+                    const opt = document.createElement('option');
+                    opt.value = key;
+                    opt.textContent = label;
+                    if (key === p.ai) opt.selected = true;
+                    aiSelect.appendChild(opt);
+                }
+                aiSelect.onchange = () => {
+                    p.ai = aiSelect.value;
+                    savePanels();
+                    updateStatus();
+                };
+                card.appendChild(aiSelect);
+
+                const roleLabel = document.createElement('label');
+                roleLabel.textContent = 'Role';
+                card.appendChild(roleLabel);
+
+                const roleSelect = document.createElement('select');
+                for (const role of roles) {
+                    const opt = document.createElement('option');
+                    opt.value = role;
+                    opt.textContent = role;
+                    if (role === p.role) opt.selected = true;
+                    roleSelect.appendChild(opt);
+                }
+                roleSelect.onchange = () => {
+                    p.role = roleSelect.value;
+                    savePanels();
+                    updateStatus();
+                };
+                card.appendChild(roleSelect);
+
+                const openBtn = document.createElement('button');
+                openBtn.className = 'open-btn';
+                openBtn.textContent = `🚀 Open ${AI_LABELS[p.ai] || p.ai}`;
+                openBtn.onclick = () => openPanel(p.id);
+                card.appendChild(openBtn);
+
+                const idLabel = document.createElement('div');
+                idLabel.className = 'panel-id';
+                idLabel.textContent = p.id;
+                card.appendChild(idLabel);
+
+                grid.appendChild(card);
+            });
+            updateStatus();
+        }
+
+        function updateStatus() {
+            const summary = panels.map(p => `${AI_LABELS[p.ai]||p.ai} (${p.role})`).join(' ↔ ');
+            statusText.textContent = `Active panels: ${summary}`;
+        }
+
+        function openPanel(panelId) {
+            const panel = panels.find(p => p.id === panelId);
+            if (!panel) return;
+            const url = AI_URLS[panel.ai];
+            if (!url) {
+                statusText.textContent = `⚠️ Unknown AI: ${panel.ai}`;
+                return;
+            }
+            const separator = url.includes('?') ? '&' : '?';
+            const fullUrl =
+                `${url}${separator}laichat-id=${panel.id}&laichat-role=${encodeURIComponent(panel.role)}&laichat-ai=${panel.ai}`;
+            const win = window.open(fullUrl, `laichat-${panel.id}`);
+            if (!win || win.closed) {
+                statusText.textContent = `⚠️ Pop‑up blocked! Allow popups for this site.`;
+                statusDot.className = 'dot gray';
+                return;
+            }
+            statusText.textContent = `✅ Opened ${AI_LABELS[panel.ai]} (${panel.role})`;
+            statusDot.className = 'dot green';
+            statusMeta.textContent = new Date().toLocaleTimeString();
+        }
+
+        // ─── ADD PANEL ──────────────────────────────────────────────────────
+        document.getElementById('addPanelBtn').onclick = () => {
+            const roles = getAllRoleNames();
+            const defaultRole = roles[0] || 'Worker';
+            const newPanel = {
+                id: generateId(),
+                ai: 'chatgpt',
+                role: defaultRole
+            };
+            panels.push(newPanel);
+            savePanels();
+            renderPanels();
+            statusText.textContent = `✅ Added panel ${newPanel.id}`;
+        };
+
+        // ─── ROLE EDITOR MODAL ─────────────────────────────────────────────
+        const overlay = document.getElementById('roleEditorOverlay');
+        const editorList = document.getElementById('roleEditorList');
+
+        function renderEditor() {
+            const roles = loadRoleLibrary();
+            editorList.innerHTML = '';
+            roles.forEach((role, index) => {
+                const div = document.createElement('div');
+                div.className = 'role-editor-item';
+
+                const row = document.createElement('div');
+                row.className = 'row';
+
+                const nameInput = document.createElement('input');
+                nameInput.type = 'text';
+                nameInput.value = role.name;
+                nameInput.placeholder = 'Role name';
+                nameInput.dataset.index = index;
+                nameInput.onchange = () => {
+                    roles[index].name = nameInput.value.trim() || role.name;
+                };
+                row.appendChild(nameInput);
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '✕';
+                delBtn.title = 'Delete this role';
+                delBtn.onclick = () => {
+                    if (roles.length <= 1) {
+                        alert('Keep at least one role.');
+                        return;
+                    }
+                    roles.splice(index, 1);
+                    saveRoleLibrary(roles);
+                    renderEditor();
+                };
+                row.appendChild(delBtn);
+                div.appendChild(row);
+
+                const textarea = document.createElement('textarea');
+                textarea.value = role.prompt || '';
+                textarea.placeholder = 'System prompt for this role...';
+                textarea.dataset.index = index;
+                textarea.onchange = () => {
+                    roles[index].prompt = textarea.value;
+                };
+                div.appendChild(textarea);
+
+                editorList.appendChild(div);
+            });
+        }
+
+        document.getElementById('editRolesBtn').onclick = () => {
+            renderEditor();
+            overlay.classList.remove('hidden');
+        };
+
+        document.getElementById('closeEditorBtn').onclick = () => {
+            overlay.classList.add('hidden');
+        };
+
+        document.getElementById('saveEditorBtn').onclick = () => {
+            // Gather data from the DOM directly to be safe
+            const items = editorList.querySelectorAll('.role-editor-item');
+            const newRoles = [];
+            items.forEach(item => {
+                const nameInput = item.querySelector('.row input');
+                const textarea = item.querySelector('textarea');
+                const name = nameInput.value.trim();
+                const prompt = textarea.value.trim();
+                if (name) newRoles.push({ name, prompt });
+            });
+            if (newRoles.length === 0) {
+                alert('You must have at least one role.');
+                return;
+            }
+            saveRoleLibrary(newRoles);
+            overlay.classList.add('hidden');
+            renderPanels(); // refresh dropdowns
+            statusText.textContent = `✅ Saved ${newRoles.length} roles to library.`;
+            statusDot.className = 'dot green';
+            statusMeta.textContent = new Date().toLocaleTimeString();
+        };
+
+        document.getElementById('addRoleEditorBtn').onclick = () => {
+            const roles = loadRoleLibrary();
+            roles.push({ name: 'New Role', prompt: 'Describe your role...' });
+            saveRoleLibrary(roles);
+            renderEditor();
+            // Scroll to bottom
+            editorList.scrollTop = editorList.scrollHeight;
+        };
+
+        document.getElementById('resetDefaultsBtn').onclick = () => {
+            if (confirm('Restore all roles to default strict prompts? Custom changes will be lost.')) {
+                saveRoleLibrary(JSON.parse(JSON.stringify(DEFAULT_ROLES_DATA)));
+                renderEditor();
+                renderPanels();
+                statusText.textContent = '✅ Restored default roles.';
+                statusDot.className = 'dot green';
+            }
+        };
+
+        // ─── IMPORT / EXPORT JSON ──────────────────────────────────────────
+        document.getElementById('exportJsonBtn').onclick = () => {
+            const roles = loadRoleLibrary();
+            const blob = new Blob([JSON.stringify(roles, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'laichat_roles.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            statusText.textContent = '📥 Exported roles JSON.';
+        };
+
+        document.getElementById('importJsonBtn').onclick = () => {
+            document.getElementById('importFileInput').click();
+        };
+
+        document.getElementById('importFileInput').onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    if (Array.isArray(data) && data.length && data[0].name && data[0].prompt !== undefined) {
+                        saveRoleLibrary(data);
+                        renderPanels();
+                        statusText.textContent = `✅ Imported ${data.length} roles from file.`;
+                        statusDot.className = 'dot green';
+                        statusMeta.textContent = new Date().toLocaleTimeString();
+                    } else {
+                        alert('Invalid format: expected an array of { name, prompt } objects.');
+                    }
+                } catch (err) {
+                    alert('Invalid JSON file: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+            e.target.value = ''; // reset
+        };
+
+        // ─── RESET ROLES (global) ──────────────────────────────────────────
+        document.getElementById('resetRolesBtn').onclick = () => {
+            if (confirm('Reset all roles to default strict prompts? Custom roles will be lost.')) {
+                saveRoleLibrary(JSON.parse(JSON.stringify(DEFAULT_ROLES_DATA)));
+                renderPanels();
+                statusText.textContent = '✅ Roles reset to defaults.';
+                statusDot.className = 'dot green';
+            }
+        };
+
+        // ─── COPY USERSCRIPT ──────────────────────────────────────────────
+        document.getElementById('copyScriptBtn').onclick = async () => {
+            try {
+                const resp = await fetch('laichat-bridge.user.js');
+                const text = await resp.text();
+                await navigator.clipboard.writeText(text);
+                statusText.textContent = '📋 Userscript copied to clipboard.';
+                statusDot.className = 'dot green';
+                statusMeta.textContent = new Date().toLocaleTimeString();
+            } catch (_) {
+                try {
+                    const resp = await fetch('laichat-bridge.user.js');
+                    const text = await resp.text();
+                    const area = document.createElement('textarea');
+                    area.value = text;
+                    area.style.cssText =
+                        'position:fixed;top:10%;left:10%;width:80%;height:60%;z-index:9999;background:#0d1117;color:#e6edf3;border:2px solid #30363d;border-radius:12px;padding:16px;font:13px/1.6 monospace;resize:both;';
+                    document.body.appendChild(area);
+                    area.select();
+                    statusText.textContent = '📄 Script shown – copy it manually.';
+                    statusDot.className = 'dot green';
+                    const rem = () => { if (area.parentNode) { area.remove();
+                            document.removeEventListener('click', rem); } };
+                    setTimeout(rem, 30000);
+                    document.addEventListener('click', rem);
+                } catch (e2) {
+                    statusText.textContent = '❌ Could not load userscript. Make sure laichat-bridge.user.js is in the same folder.';
+                    statusDot.className = 'dot gray';
+                }
+            }
+        };
+
+        // ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────
+        document.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+                e.preventDefault();
+                document.getElementById('addPanelBtn').click();
+            }
+            if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+                e.preventDefault();
+                document.getElementById('copyScriptBtn').click();
+            }
+            if (e.key === 'Escape') {
+                if (!overlay.classList.contains('hidden')) {
+                    overlay.classList.add('hidden');
+                }
+            }
+        });
+
+        // ─── INIT ──────────────────────────────────────────────────────────
+        loadPanels();
+        renderPanels();
+        console.log('🧠 Laichat · ⌘A add panel  ⌘C copy script');
+    </script>
+</body>
+</html>
