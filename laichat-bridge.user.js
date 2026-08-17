@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Laichat Bridge
 // @namespace    laichat
-// @version      0.3.2
-// @description  Role library from localStorage. Strict prompts. Toolbar at bottom‑left.
+// @version      0.6.0
+// @description  Full toolbar, compact, with single font-size variable.
 // @match        https://chatgpt.com/*
 // @match        https://claude.ai/*
 // @match        https://gemini.google.com/*
@@ -45,17 +45,28 @@
         grok: 'Grok'
     };
 
-    // ─── DYNAMIC ROLE PROMPT (localStorage first, then fallback) ────────
+    // ─── TOOLBAR SIZE CONTROL ──────────────────────────────────────────
+    // Change this one value to resize the entire toolbar
+    const TOOLBAR_FONT_SIZE = '11px';      // e.g., '10px', '12px', '14px'
+    const TOOLBAR_PADDING = '4px 8px';     // optional: adjust container padding
+    const BUTTON_PADDING = '2px 8px';      // optional: adjust button padding
+
+    // ─── DYNAMIC ROLE PROMPT (with consensus logic) ─────────────────────
 
     const DEFAULT_ROLES_DATA = [{
         name: 'Critical Reviewer',
-        prompt: `You are the Critical Reviewer (Red Team). RULES: 1) Max 200 words. 2) ONLY list defects, edge cases, security flaws, performance bottlenecks. 3) DO NOT propose solutions or write code. 4) Stick EXACTLY to the provided code. 5) Flag only what is broken or missing. Format: Bullet points. No fluff.`
+        prompt: `You are the Critical Reviewer (Red Team). RULES: 1) Max 200 words. 2) ONLY list defects, edge cases, security flaws, performance bottlenecks. 3) DO NOT propose solutions or write code. 4) Stick EXACTLY to the provided code. 5) Flag only what is broken or missing. Format: Bullet points. No fluff.
+After the Solution Architect proposes a fix plan, review it. If you agree with the plan, respond with: "AGREED – proceed with implementation." Only then can the Architect generate the final implementation task.`
     }, {
         name: 'Solution Architect',
-        prompt: `You are the Solution Architect (Blue Team). RULES: 1) Max 200 words. 2) Synthesize the reviewer's findings into a minimal step‑by‑step fix plan. 3) DO NOT write code. 4) Do not add new features. 5) Prioritise the simplest path. Format: Numbered steps. No fluff.`
+        prompt: `You are the Solution Architect (Blue Team). RULES: 1) Max 200 words per reply. 2) Synthesize the Critical Reviewer's findings into a minimal step‑by‑step fix plan. 3) DO NOT write code. Only describe what to change, where, and why. 4) Do not add new features. 5) Prioritise the simplest path.
+You may iterate with the Reviewer. Once the Reviewer explicitly says "AGREED", output a concise **Implementation Task Prompt** for the Precise Programmer. Prefix it with:
+=== IMPLEMENTATION TASK PROMPT ===
+Then list the exact steps (no code, just clear instructions). After that, you may stop replying.`
     }, {
         name: 'Precise Programmer',
-        prompt: `You are the Precise Programmer. RULES: 1) Output ONLY the exact code changes (diff or full file). 2) Do NOT add extra features, comments, or tests unless asked. 3) Do NOT refactor unrelated code. 4) Strictly implement the architect's plan. Format: Code blocks only. No explanations.`
+        prompt: `You are the Precise Programmer. RULES: 1) Output ONLY the exact code changes (diff or full file). 2) Do NOT add extra features, comments, or tests unless asked. 3) Do NOT refactor unrelated code. 4) Strictly implement the plan provided by the Solution Architect.
+If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK PROMPT ===", respond with: "Please send the implementation prompt from the Solution Architect first." Otherwise, ignore everything before that marker and only code what follows.`
     }, {
         name: 'CEO',
         prompt: `You are the CEO. Set vision, make high‑level decisions, approve strategies. Communicate clearly and decisively. Max 200 words.`
@@ -240,65 +251,187 @@
         return (el?.innerText || el?.textContent || '').trim();
     }
 
-    // ─── ROBUST RESPONSE DETECTION ──────────────────────────────────────
+    // ─── STRIP THOUGHT PREFIX FROM DEEPSEEK (fallback) ────────────────
+
+    function stripThoughtPrefix(text) {
+        const lines = text.split('\n');
+        let startIdx = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            if (/^Thought for|^Thinking for|^Model \d+:\d+/.test(line)) {
+                startIdx = i + 1;
+                continue;
+            }
+            break;
+        }
+        if (startIdx > 0) {
+            return lines.slice(startIdx).join('\n').trim();
+        }
+        return text;
+    }
+
+    // ─── IMPROVED RESPONSE DETECTION ──────────────────────────────────
 
     function latestAssistantText() {
+        const toolbar = document.getElementById('laichat-toolbar');
+        const isInToolbar = (el) => toolbar && toolbar.contains(el);
+
+        const isUIControl = (text) => {
+            const controls = [
+                /^Show conversation without markdown formatting/i,
+                /^Collapse/i, /^Expand/i, /^Copy/i, /^Regenerate/i,
+                /^Edit/i, /^Delete/i, /^Save/i, /^Cancel/i,
+                /^Submit/i, /^Send/i, /^Stop/i, /^Clear/i, /^Reset/i,
+                /^Show more/i, /^Show less/i, /^Loading/i,
+                /^Code/i, /^Snippet/i, /^Thumb_up/i, /^Thumb_down/i,
+                /^More options/i, /^Open options/i, /^Rerun/i,
+                /^One more step/i, /^Verify/i, /^Captcha/i, /^Continue/i,
+                /^Please wait/i, /^Checking/i, /^Redirect/i
+            ];
+            return controls.some(re => re.test(text.trim()));
+        };
+
         const candidates = [];
 
-        let selectors = [
-            '[data-message-author-role="assistant"]',
-            '[data-testid*="assistant"]',
-            'main article',
-            'main [role="article"]',
-            '.message:last-child .markdown',
-            '.assistant-message'
-        ];
-
+        // 1. DeepSeek‑specific: use the exact answer container
         if (AI === 'deepseek') {
-            selectors = selectors.concat([
-                '.chat-message-ai',
-                '.message-ai',
-                '.assistant-message',
-                '.message[data-role="assistant"]',
-                '.chat-message[data-role="assistant"]',
-                '.ai-message',
-                '.chat-container .assistant',
-                '.ds-message',
-                '.message-item[data-role="assistant"]',
-                '.message[data-author="assistant"]',
-                '.assistant',
-                '.assistant-message-content',
-                '.message-content:not(.user)'
-            ]);
-        } else if (AI === 'gemini') {
-            selectors = selectors.concat([
-                '.model-response',
-                '.response',
-                '.message-content'
-            ]);
-        } else if (AI === 'claude') {
-            selectors = selectors.concat([
-                '.message.assistant',
-                '.claude-message'
-            ]);
+            const messages = document.querySelectorAll('.ds-message');
+            if (messages.length) {
+                const lastMsg = messages[messages.length - 1];
+                const answerContent = lastMsg.querySelector('.ds-markdown.ds-assistant-message-main-content');
+                if (answerContent) {
+                    let txt = textOf(answerContent);
+                    if (txt.length > 50 && !isUIControl(txt)) {
+                        candidates.push(txt);
+                        console.log('[Laichat] DeepSeek: found answer in .ds-markdown.ds-assistant-message-main-content, length:', txt.length);
+                    }
+                } else {
+                    let txt = textOf(lastMsg);
+                    if (txt.length > 50 && !isUIControl(txt)) {
+                        txt = stripThoughtPrefix(txt);
+                        if (txt.length > 10) {
+                            candidates.push(txt);
+                            console.log('[Laichat] DeepSeek: fallback to .ds-message with stripped prefix, length:', txt.length);
+                        }
+                    }
+                }
+            }
+            if (!candidates.length) {
+                const selectors = [
+                    '.chat-message-ai', '.message-ai', '.assistant-message',
+                    '[data-role="assistant"]', '.message[data-role="assistant"]'
+                ];
+                let found = [];
+                for (const sel of selectors) {
+                    document.querySelectorAll(sel).forEach(el => {
+                        if (isInToolbar(el)) return;
+                        const txt = textOf(el);
+                        if (txt.length > 50 && !isUIControl(txt)) {
+                            found.push(txt);
+                        }
+                    });
+                }
+                if (found.length) {
+                    found.sort((a, b) => b.length - a.length);
+                    let txt = found[0];
+                    txt = stripThoughtPrefix(txt);
+                    candidates.push(txt);
+                    console.log('[Laichat] DeepSeek: fallback found longest container, stripped length:', txt.length);
+                }
+            }
         }
 
-        for (const sel of selectors) {
-            document.querySelectorAll(sel).forEach(el => {
-                const t = textOf(el);
-                if (t.length > 15) candidates.push(t);
-            });
+        // 2. Gemini‑specific
+        if (AI === 'gemini' && !candidates.length) {
+            let turn = document.querySelector('ms-chat-turn[data-turn-role="Model"]');
+            if (turn) {
+                let content = turn.querySelector('.turn-content');
+                if (content) {
+                    let raw = content.innerText.trim();
+                    if (raw.length > 30 && !isUIControl(raw)) {
+                        candidates.push(raw);
+                        console.log('[Laichat] Gemini: found via ms-chat-turn .turn-content, length:', raw.length);
+                    }
+                }
+            }
+            if (!candidates.length) {
+                const contents = document.querySelectorAll('.turn-content');
+                if (contents.length) {
+                    const lastContent = contents[contents.length - 1];
+                    let raw = lastContent.innerText.trim();
+                    if (raw.length > 30 && !isUIControl(raw)) {
+                        candidates.push(raw);
+                        console.log('[Laichat] Gemini: found via .turn-content (last), length:', raw.length);
+                    }
+                }
+            }
+            if (!candidates.length) {
+                const modelEls = document.querySelectorAll('[data-turn-role="Model"]');
+                if (modelEls.length) {
+                    const lastModel = modelEls[modelEls.length - 1];
+                    let raw = lastModel.innerText.trim();
+                    if (raw.length > 30 && !isUIControl(raw)) {
+                        candidates.push(raw);
+                        console.log('[Laichat] Gemini: found via [data-turn-role="Model"], length:', raw.length);
+                    }
+                }
+            }
         }
 
+        // 3. General site‑specific selectors for other AIs
+        if (!candidates.length) {
+            let selectors = [
+                '[data-message-author-role="assistant"] .markdown',
+                '[data-message-author-role="assistant"] .message-content',
+                '[data-testid*="assistant"] .markdown',
+                '[data-testid*="assistant"] .message-content',
+                'main article .markdown',
+                'main [role="article"] .markdown',
+                '.message:last-child .markdown',
+                '.assistant-message .markdown',
+                '.assistant-message .message-content'
+            ];
+
+            if (AI === 'deepseek') {
+                selectors = selectors.concat([
+                    '.chat-message-ai .markdown',
+                    '.ds-message .markdown',
+                    '.message[data-role="assistant"] .markdown'
+                ]);
+            } else if (AI === 'claude') {
+                selectors = selectors.concat([
+                    '.message.assistant .markdown',
+                    '.claude-message .markdown'
+                ]);
+            } else if (AI === 'chatgpt') {
+                selectors = selectors.concat([
+                    '[data-message-author-role="assistant"] .markdown'
+                ]);
+            }
+
+            for (const sel of selectors) {
+                document.querySelectorAll(sel).forEach(el => {
+                    if (isInToolbar(el)) return;
+                    const t = textOf(el);
+                    if (t.length > 50 && !isUIControl(t)) {
+                        candidates.push(t);
+                    }
+                });
+            }
+        }
+
+        // 4. Fallback: generic scanning inside <main>
         if (!candidates.length) {
             const main = document.querySelector('main');
             if (main) {
                 const blocks = main.querySelectorAll('div, p, article, section, .message, .chat-message, .response');
                 for (const el of blocks) {
+                    if (isInToolbar(el)) continue;
                     const t = textOf(el);
-                    if (t.length > 15) {
+                    if (t.length > 50) {
                         const classes = el.className || '';
-                        if (!classes.includes('input') && !classes.includes('button') && !classes.includes('send')) {
+                        if (!classes.includes('input') && !classes.includes('button') && !classes.includes('send') && !isUIControl(t)) {
                             candidates.push(t);
                         }
                     }
@@ -306,12 +439,14 @@
             }
         }
 
+        // 5. Last resort: entire page
         if (!candidates.length) {
             const allElements = document.querySelectorAll('body *');
             const textBlocks = [];
             for (const el of allElements) {
+                if (isInToolbar(el)) continue;
                 const t = textOf(el);
-                if (t.length > 15) {
+                if (t.length > 50) {
                     if (!el.closest('script, style, input, textarea, button')) {
                         textBlocks.push(t);
                     }
@@ -320,78 +455,89 @@
             if (textBlocks.length) {
                 const last = textBlocks[textBlocks.length - 1];
                 const inputText = inputCandidates()[0]?.textContent || '';
-                if (last !== inputText) {
+                if (last !== inputText && !isUIControl(last)) {
                     candidates.push(last);
                 }
             }
         }
 
+        // Log candidates for debugging
+        console.log('[Laichat] Candidate texts found:', candidates.map(c => c.slice(0, 60) + '...'));
+
         if (candidates.length) {
-            const result = candidates[candidates.length - 1];
-            console.log('[Laichat] Latest response found:', result.slice(0, 60) + '...');
+            let result = candidates[candidates.length - 1];
+            if (result.match(/\([^)]+\)/) && candidates.length > 1) {
+                const prev = candidates[candidates.length - 2];
+                if (prev && !prev.match(/\([^)]+\)/)) {
+                    result = prev;
+                }
+            }
+            console.log('[Laichat] Selected response:', result.slice(0, 80) + '...');
             return result;
         } else {
-            console.warn('[Laichat] No response found after all attempts.');
+            console.warn('[Laichat] No suitable response found.');
             return '';
         }
     }
 
-    // ─── FILL INPUT ──────────────────────────────────────────────────────
+    // ─── FILL INPUT (enhanced with retries) ──────────────────────────────
 
-    function fillInput(text) {
-        const el = inputCandidates()[0];
-        if (!el) {
-            console.warn('[Laichat] No input element found.');
-            return false;
-        }
-        console.log('[Laichat] Filling input with:', text.slice(0, 60) + '...');
-
-        el.focus();
-
-        if (AI === 'claude') {
-            const htmlText = text.replace(/\n/g, '<br>');
-            el.innerHTML = htmlText;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-            el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
-            setTimeout(() => {
-                const current = el.innerText || el.textContent || '';
-                if (current.includes(text.slice(0, 20))) {
-                    console.log('[Laichat] Claude input successfully filled.');
-                } else {
-                    console.warn('[Laichat] Claude input content mismatch!');
+    function fillInput(text, maxRetries = 5) {
+        let attempts = 0;
+        return new Promise((resolve) => {
+            function tryFill() {
+                const el = inputCandidates()[0];
+                if (!el) {
+                    console.warn(`[Laichat] No input element found (attempt ${attempts+1}/${maxRetries})`);
+                    attempts++;
+                    if (attempts < maxRetries) {
+                        setTimeout(tryFill, 500);
+                    } else {
+                        resolve(false);
+                    }
+                    return;
                 }
-            }, 200);
-            return true;
-        }
+                console.log('[Laichat] Filling input with:', text.slice(0, 60) + '...');
 
-        if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set ||
-                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-            if (setter) setter.call(el, text);
-            else el.value = text;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-        } else {
-            el.textContent = text;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-        }
-    }
+                el.focus();
 
-    function submitInput() {
-        const el = inputCandidates()[0];
-        if (!el) return false;
-        const form = el.closest('form');
-        if (form) {
-            const btn = form.querySelector('button[type="submit"]');
-            if (btn && !btn.disabled) { btn.click(); return true; }
-        }
-        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-        return true;
+                if (AI === 'claude') {
+                    const htmlText = text.replace(/\n/g, '<br>');
+                    el.innerHTML = htmlText;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+                    el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+                    setTimeout(() => {
+                        const current = el.innerText || el.textContent || '';
+                        if (current.includes(text.slice(0, 20))) {
+                            console.log('[Laichat] Claude input successfully filled.');
+                            resolve(true);
+                        } else {
+                            console.warn('[Laichat] Claude input content mismatch!');
+                            resolve(false);
+                        }
+                    }, 200);
+                    return;
+                }
+
+                if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set ||
+                        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+                    if (setter) setter.call(el, text);
+                    else el.value = text;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    resolve(true);
+                } else {
+                    el.textContent = text;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    resolve(true);
+                }
+            }
+            tryFill();
+        });
     }
 
     // ─── ROLE PROMPT INJECTION ──────────────────────────────────────────
@@ -420,17 +566,202 @@
             return;
         }
         if (force || currentText.length < 5) {
-            const success = fillInput(prompt);
-            if (success) {
-                toast(`✅ Role "${MY_ROLE}" prompt injected.`);
-                console.log('[Laichat] Role prompt injected successfully.');
-            } else {
-                toast('❌ Failed to inject prompt. Check console.');
-                console.error('[Laichat] fillInput returned false.');
-            }
+            fillInput(prompt).then(success => {
+                if (success) {
+                    toast(`✅ Role "${MY_ROLE}" prompt injected.`);
+                    console.log('[Laichat] Role prompt injected successfully.');
+                } else {
+                    toast('❌ Failed to inject prompt. Check console.');
+                    console.error('[Laichat] fillInput returned false.');
+                }
+            });
         } else {
             toast('Input has content – use dropdown to force injection.');
             console.log('[Laichat] Input has content, not overwriting.');
+        }
+    }
+
+    // ─── IMPROVED SUBMIT LOGIC (with correct "Run" button) ──────────────
+
+    function submitInput() {
+        const el = inputCandidates()[0];
+        if (!el) {
+            console.warn('[Laichat] No input element found for submit.');
+            return false;
+        }
+
+        setTimeout(() => {
+            let btn = null;
+
+            // 1. PRIMARY: Look for the correct "Run" submit button
+            const allSubmitButtons = document.querySelectorAll('button[type="submit"]');
+            for (const b of allSubmitButtons) {
+                const ariaLabel = b.getAttribute('aria-label') || '';
+                if (ariaLabel.toLowerCase().includes('toggle run settings')) {
+                    continue;
+                }
+                if (b.querySelector('span.run-button-label')) {
+                    btn = b;
+                    break;
+                }
+            }
+
+            // 2. If not found, look for any button whose trimmed text is exactly "Run" (or "▶ Run")
+            if (!btn) {
+                const allButtons = document.querySelectorAll('button');
+                for (const b of allButtons) {
+                    const text = b.innerText.trim().toLowerCase();
+                    if (text === 'run' || text === '▶ run' || text === 'run ▶') {
+                        const ariaLabel = b.getAttribute('aria-label') || '';
+                        if (ariaLabel.toLowerCase().includes('toggle run settings')) {
+                            continue;
+                        }
+                        btn = b;
+                        break;
+                    }
+                }
+            }
+
+            // 3. Fallback: generic send/submit patterns
+            if (!btn) {
+                const form = el.closest('form');
+                if (form) {
+                    btn = form.querySelector('button[type="submit"]');
+                    if (!btn) {
+                        btn = form.querySelector('button[aria-label*="Send"], button[aria-label*="Submit"], button[data-testid*="send"], button[class*="send"], button[class*="submit"]');
+                    }
+                }
+                if (!btn) {
+                    const container = el.closest('[class*="chat"], [class*="input"], .chat-input-container, .input-area, .ds-chat-input-area');
+                    if (container) {
+                        btn = container.querySelector('button[aria-label*="Send"], button[aria-label*="Submit"], button[data-testid*="send"], button[class*="send"], button[class*="submit"]');
+                    }
+                }
+                if (!btn) {
+                    const candidates = document.querySelectorAll('button[aria-label*="Send"], button[aria-label*="Submit"], button[data-testid*="send"], button[data-testid*="submit"], button[class*="send"]:not([disabled]), button[class*="submit"]:not([disabled])');
+                    for (const b of candidates) {
+                        const ariaLabel = b.getAttribute('aria-label') || '';
+                        if (!ariaLabel.toLowerCase().includes('toggle run settings')) {
+                            btn = b;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (btn && !btn.disabled) {
+                console.log('[Laichat] Submitting via button click:', btn);
+                btn.click();
+                return;
+            }
+
+            // 4. If no button, simulate Enter key
+            console.log('[Laichat] No submit button found, simulating Enter key.');
+            el.focus();
+            const events = [
+                new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true, composed: true }),
+                new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true, composed: true }),
+                new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true, composed: true })
+            ];
+            for (const ev of events) {
+                el.dispatchEvent(ev);
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            if (el.isContentEditable) {
+                const textEvent = new InputEvent('textInput', { data: '\n', bubbles: true });
+                el.dispatchEvent(textEvent);
+            }
+        }, 300);
+
+        return true;
+    }
+
+    // ─── SEND TO PROGRAMMER (auto‑target) ─────────────────────────────
+
+    function sendToProgrammer() {
+        const registry = getRegistry();
+        let programmerId = null;
+        for (const id in registry) {
+            const entry = registry[id];
+            if (entry.role && entry.role.toLowerCase() === 'precise programmer') {
+                programmerId = id;
+                break;
+            }
+        }
+        if (!programmerId) {
+            toast('⚠️ No "Precise Programmer" panel found. Please create one.');
+            console.warn('[Laichat] No programmer panel found.');
+            return;
+        }
+        sendCurrent(programmerId, true);
+    }
+
+    // ─── SEND / RECEIVE ──────────────────────────────────────────────────
+
+    function sendCurrent(targetId, autoSubmit) {
+        if (!targetId) {
+            toast('No target selected. Open another panel first.');
+            return;
+        }
+        const msg = latestAssistantText();
+        if (!msg) {
+            toast('Could not find the latest response.');
+            console.warn('[Laichat] latestAssistantText returned empty.');
+            return;
+        }
+
+        const packet = {
+            id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+            from: MY_ID,
+            fromRole: MY_ROLE,
+            fromAI: MY_AI,
+            to: targetId,
+            text: msg,
+            created: Date.now(),
+            autoSubmit
+        };
+
+        const inboxKey = INBOX_PREFIX + targetId;
+        GM_setValue(inboxKey, packet);
+        GM_setClipboard(msg);
+        const registry = getRegistry();
+        const targetEntry = registry[targetId];
+        const targetLabel = targetEntry ? `${labels[targetEntry.ai]||targetEntry.ai} (${targetEntry.role})` : targetId;
+        toast(`📤 Sent to ${targetLabel}`);
+        console.log(`[Laichat] Sent message (${msg.length} chars) to ${targetId}`);
+    }
+
+    async function receive(packet) {
+        if (!packet) return;
+        if (packet.from === MY_ID) return;
+        if (packet.to !== MY_ID) return;
+
+        const seen = GM_getValue(SEEN_KEY, '');
+        if (seen === packet.id) return;
+        GM_setValue(SEEN_KEY, packet.id);
+
+        const text = packet.text || '';
+        if (!text) {
+            toast('⚠️ Received empty message.');
+            console.warn('[Laichat] Received empty packet:', packet);
+            return;
+        }
+
+        console.log(`[Laichat] Received from ${packet.fromAI} (${packet.fromRole}) – text length: ${text.length}`);
+        toast(`📥 Received from ${packet.fromAI} (${packet.fromRole}) – ${text.slice(0, 30)}...`);
+
+        const success = await fillInput(text, 5);
+
+        if (success) {
+            console.log('[Laichat] Input filled successfully.');
+            if (packet.autoSubmit) {
+                setTimeout(submitInput, 400);
+            }
+        } else {
+            console.error('[Laichat] Failed to fill input after retries.');
+            toast('❌ Could not paste into input box. Showing message in a modal.');
+            showMessageModal(text);
         }
     }
 
@@ -452,13 +783,60 @@
                 border: '1px solid #394452',
                 borderRadius: '9px',
                 font: '13px -apple-system,BlinkMacSystemFont,sans-serif',
-                boxShadow: '0 8px 30px #0008'
+                boxShadow: '0 8px 30px #0008',
+                maxWidth: '80%',
+                wordBreak: 'break-word'
             });
             document.body.appendChild(el);
         }
         el.textContent = msg;
         clearTimeout(el._t);
-        el._t = setTimeout(() => el.remove(), 2500);
+        el._t = setTimeout(() => el.remove(), 5000);
+    }
+
+    // ─── SHOW MESSAGE IN MODAL (fallback) ──────────────────────────────
+
+    function showMessageModal(text) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top:0; left:0; width:100%; height:100%;
+            background: rgba(0,0,0,0.8); z-index: 2147483647;
+            display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(4px);
+        `;
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            background: #0d1117; border: 1px solid #30363d; border-radius: 16px;
+            padding: 24px; max-width: 700px; width: 90%; max-height: 80vh;
+            display: flex; flex-direction: column; gap: 12px;
+            color: #e6edf3; font-family: -apple-system,BlinkMacSystemFont,sans-serif;
+        `;
+        modal.innerHTML = `
+            <h3 style="margin:0;font-weight:600;">📨 Received Message</h3>
+            <div style="flex:1;overflow-y:auto;background:#161b22;border-radius:8px;padding:12px;font:13px/1.6 monospace;white-space:pre-wrap;word-break:break-word;max-height:50vh;">${text}</div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button id="modal-copy-btn" style="background:#238636;border:0;border-radius:6px;padding:8px 18px;color:#fff;font-weight:600;cursor:pointer;">📋 Copy</button>
+                <button id="modal-close-btn" style="background:#21262d;border:0;border-radius:6px;padding:8px 18px;color:#c9d1d9;cursor:pointer;">Close</button>
+            </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        modal.querySelector('#modal-close-btn').onclick = () => overlay.remove();
+        modal.querySelector('#modal-copy-btn').onclick = () => {
+            navigator.clipboard.writeText(text).then(() => {
+                toast('📋 Copied to clipboard!');
+            }).catch(() => {
+                const area = document.createElement('textarea');
+                area.value = text;
+                document.body.appendChild(area);
+                area.select();
+                document.execCommand('copy');
+                area.remove();
+                toast('📋 Copied!');
+            });
+        };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     }
 
     // ─── ROLE LIBRARY MODAL (Settings) ──────────────────────────────────
@@ -525,7 +903,7 @@
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     }
 
-    // ─── TOOLBAR – DRAGGABLE, BOTTOM‑LEFT ─────────────────────────────
+    // ─── FULL TOOLBAR (with global font-size) ───────────────────────────
 
     let toolbarBox = null;
     let roleSelect = null;
@@ -585,47 +963,74 @@
         roleSelect.appendChild(customOpt);
     }
 
+    function refreshTargets() {
+        if (!targetSelect) return;
+        const registry = getRegistry();
+        const currentVal = targetSelect.value;
+
+        while (targetSelect.firstChild) {
+            targetSelect.removeChild(targetSelect.firstChild);
+        }
+
+        let hasTargets = false;
+        for (const id in registry) {
+            if (id === MY_ID) continue;
+            const entry = registry[id];
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = `${labels[entry.ai] || entry.ai} (${entry.role})`;
+            targetSelect.appendChild(option);
+            hasTargets = true;
+        }
+        if (!hasTargets) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '⏳ No other panels';
+            targetSelect.appendChild(opt);
+        }
+        if (currentVal && targetSelect.querySelector(`option[value="${currentVal}"]`)) {
+            targetSelect.value = currentVal;
+        }
+    }
+
     function buildToolbar() {
         if (document.getElementById('laichat-toolbar')) {
             console.log('[Laichat] Toolbar already exists.');
             return true;
         }
 
-        console.log('[Laichat] Building toolbar...');
+        console.log('[Laichat] Building full toolbar (compact)...');
         try {
             const box = document.createElement('div');
             box.id = 'laichat-toolbar';
             Object.assign(box.style, {
                 position: 'fixed',
-                bottom: '12px',        // <-- placed at bottom
-                left: '12px',          // <-- left side
+                bottom: '12px',
+                left: '12px',
                 zIndex: 2147483647,
                 display: 'flex',
-                gap: '6px',
-                padding: '6px 10px',
+                gap: '4px',
+                padding: TOOLBAR_PADDING,
                 background: '#151a21ee',
                 border: '1px solid #394452',
-                borderRadius: '10px',
+                borderRadius: '8px',
                 backdropFilter: 'blur(6px)',
                 alignItems: 'center',
                 flexWrap: 'nowrap',
-                maxWidth: '600px',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
                 cursor: 'move',
-                userSelect: 'none'
+                userSelect: 'none',
+                fontSize: TOOLBAR_FONT_SIZE,
+                lineHeight: '1.2'
             });
 
             makeDraggable(box);
 
-            // ─── No role badge – only dropdown ───────────────────────────
-
             // Role dropdown
             roleSelect = document.createElement('select');
             roleSelect.style.cssText =
-                'background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:130px;';
-
+                `background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:2px 4px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;max-width:100px;`;
             refreshRoleDropdown();
-
             roleSelect.onchange = () => {
                 const newRole = roleSelect.value;
                 if (newRole === 'Custom...') {
@@ -660,50 +1065,20 @@
             targetSelect = document.createElement('select');
             targetSelect.id = 'laichat-target';
             targetSelect.style.cssText =
-                'background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:140px;';
-
-            function refreshTargets() {
-                const registry = getRegistry();
-                const currentVal = targetSelect.value;
-
-                while (targetSelect.firstChild) {
-                    targetSelect.removeChild(targetSelect.firstChild);
-                }
-
-                let hasTargets = false;
-                for (const id in registry) {
-                    if (id === MY_ID) continue;
-                    const entry = registry[id];
-                    const option = document.createElement('option');
-                    option.value = id;
-                    option.textContent = `${labels[entry.ai] || entry.ai} (${entry.role})`;
-                    targetSelect.appendChild(option);
-                    hasTargets = true;
-                }
-                if (!hasTargets) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = '⏳ No other panels';
-                    targetSelect.appendChild(opt);
-                }
-                if (currentVal && targetSelect.querySelector(`option[value="${currentVal}"]`)) {
-                    targetSelect.value = currentVal;
-                }
-            }
-
-            box.appendChild(targetSelect);
+                `background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:2px 4px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;max-width:100px;`;
             refreshTargets();
+            box.appendChild(targetSelect);
 
             // Send button
             const sendBtn = document.createElement('button');
-            sendBtn.textContent = `↗ Send (${MY_ROLE})`;
+            sendBtn.textContent = 'Send';
             Object.assign(sendBtn.style, {
                 background: '#4f8cff',
                 color: '#fff',
                 border: 0,
-                borderRadius: '6px',
-                padding: '4px 12px',
-                fontSize: '12px',
+                borderRadius: '4px',
+                padding: BUTTON_PADDING,
+                fontSize: TOOLBAR_FONT_SIZE,
                 cursor: 'pointer',
                 fontWeight: '600',
                 whiteSpace: 'nowrap'
@@ -711,22 +1086,40 @@
             sendBtn.onclick = () => sendCurrent(targetSelect.value, false);
             box.appendChild(sendBtn);
 
-            // Send + submit
+            // Send+Submit button
             const sendSubmitBtn = document.createElement('button');
-            sendSubmitBtn.textContent = `↗ + submit (${MY_ROLE})`;
+            sendSubmitBtn.textContent = 'Send+Submit';
             Object.assign(sendSubmitBtn.style, {
                 background: '#238636',
                 color: '#fff',
                 border: 0,
-                borderRadius: '6px',
-                padding: '4px 12px',
-                fontSize: '12px',
+                borderRadius: '4px',
+                padding: BUTTON_PADDING,
+                fontSize: TOOLBAR_FONT_SIZE,
                 cursor: 'pointer',
                 fontWeight: '600',
                 whiteSpace: 'nowrap'
             });
             sendSubmitBtn.onclick = () => sendCurrent(targetSelect.value, true);
             box.appendChild(sendSubmitBtn);
+
+            // Programmer button
+            const programmerBtn = document.createElement('button');
+            programmerBtn.textContent = '👨‍💻 Prog.';
+            Object.assign(programmerBtn.style, {
+                background: '#1f6feb',
+                color: '#fff',
+                border: 0,
+                borderRadius: '4px',
+                padding: BUTTON_PADDING,
+                fontSize: TOOLBAR_FONT_SIZE,
+                cursor: 'pointer',
+                fontWeight: '600',
+                whiteSpace: 'nowrap'
+            });
+            programmerBtn.title = 'Send to Precise Programmer (auto‑submit)';
+            programmerBtn.onclick = sendToProgrammer;
+            box.appendChild(programmerBtn);
 
             // Refresh button
             const refreshBtn = document.createElement('button');
@@ -735,26 +1128,26 @@
                 background: '#21262d',
                 color: '#c9d1d9',
                 border: 0,
-                borderRadius: '6px',
-                padding: '4px 8px',
-                fontSize: '12px',
+                borderRadius: '4px',
+                padding: '2px 6px',
+                fontSize: TOOLBAR_FONT_SIZE,
                 cursor: 'pointer'
             });
             refreshBtn.title = 'Refresh panel list';
-            refreshBtn.onclick = refreshTargets;
+            refreshBtn.onclick = () => { refreshTargets(); toast('↻ Refreshed'); };
             box.appendChild(refreshBtn);
 
-            // Settings (import library)
+            // Settings button
             const settingsBtn = document.createElement('button');
             settingsBtn.textContent = '⚙️';
             settingsBtn.title = 'Import Role Library (JSON)';
             settingsBtn.style.cssText =
-                'background:#21262d;color:#c9d1d9;border:0;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;';
+                `background:#21262d;color:#c9d1d9;border:0;border-radius:4px;padding:2px 6px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;`;
             settingsBtn.onclick = showRoleLibraryModal;
             box.appendChild(settingsBtn);
 
             document.body.appendChild(box);
-            console.log('[Laichat] Toolbar appended (bottom‑left).');
+            console.log('[Laichat] Full toolbar appended (compact).');
 
             GM_addValueChangeListener(REGISTRY_KEY, () => {
                 refreshTargets();
@@ -765,60 +1158,6 @@
         } catch (e) {
             console.error('[Laichat] Error building toolbar:', e);
             return false;
-        }
-    }
-
-    // ─── SEND / RECEIVE ──────────────────────────────────────────────────
-
-    function sendCurrent(targetId, autoSubmit) {
-        if (!targetId) {
-            toast('No target selected. Open another panel first.');
-            return;
-        }
-        const msg = latestAssistantText();
-        if (!msg) {
-            toast('Could not find the latest response.');
-            console.warn('[Laichat] latestAssistantText returned empty.');
-            return;
-        }
-
-        const packet = {
-            id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
-            from: MY_ID,
-            fromRole: MY_ROLE,
-            fromAI: MY_AI,
-            to: targetId,
-            text: msg,
-            created: Date.now(),
-            autoSubmit
-        };
-
-        const inboxKey = INBOX_PREFIX + targetId;
-        GM_setValue(inboxKey, packet);
-        GM_setClipboard(msg);
-        const registry = getRegistry();
-        const targetEntry = registry[targetId];
-        const targetLabel = targetEntry ? `${labels[targetEntry.ai]||targetEntry.ai} (${targetEntry.role})` : targetId;
-        toast(`📤 Sent to ${targetLabel}`);
-    }
-
-    async function receive(packet) {
-        if (!packet) return;
-        if (packet.from === MY_ID) return;
-        if (packet.to !== MY_ID) return;
-
-        const seen = GM_getValue(SEEN_KEY, '');
-        if (seen === packet.id) return;
-        GM_setValue(SEEN_KEY, packet.id);
-
-        const ok = fillInput(packet.text);
-        if (!ok) {
-            toast(`📥 Received from ${packet.fromAI} (${packet.fromRole}), but no input box found.`);
-            return;
-        }
-        toast(`📥 Received from ${packet.fromAI} (${packet.fromRole})`);
-        if (packet.autoSubmit) {
-            setTimeout(submitInput, 600);
         }
     }
 
