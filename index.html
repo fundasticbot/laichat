@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Laichat – AI Collaboration Hub</title>
     <style>
+        /* Your original CSS – unchanged */
         * {
             box-sizing: border-box;
             margin: 0;
@@ -45,6 +46,19 @@
             gap: 8px;
             flex-wrap: wrap;
             align-items: center;
+        }
+        .role-manager input {
+            background: #0d1117;
+            color: #e6edf3;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 13px;
+            width: 150px;
+        }
+        .role-manager input:focus {
+            outline: none;
+            border-color: #58a6ff;
         }
         .role-manager button {
             background: #21262d;
@@ -180,6 +194,13 @@
         .actions button.primary:hover {
             background: #388bfd;
         }
+        .actions button.outline {
+            background: transparent;
+            border: 1px solid #30363d;
+        }
+        .actions button.outline:hover {
+            background: #21262d;
+        }
         .status {
             background: #0d1117;
             border: 1px solid #30363d;
@@ -224,7 +245,18 @@
             border-radius: 4px;
             color: #c9d1d9;
         }
-        /* ─── ROLE EDITOR MODAL ─────────────────────────────────────────── */
+        @media (max-width: 640px) {
+            .panel-grid {
+                grid-template-columns: 1fr;
+            }
+            .actions {
+                flex-direction: column;
+            }
+            .sub .role-manager input {
+                width: 100%;
+            }
+        }
+        /* ─── ROLE EDITOR MODAL ──────────────────────────────────────────── */
         .modal-overlay {
             position: fixed;
             top: 0;
@@ -401,7 +433,8 @@
         <div class="sub">
             <span>Multi‑panel AI orchestration with roles and routing.</span>
             <div class="role-manager">
-                <button class="primary" id="editRolesBtn">📝 Edit Roles</button>
+                <input type="text" id="newRoleInput" placeholder="Custom role name" />
+                <button class="primary" id="addRoleBtn">+ Add Role</button>
                 <button id="resetRolesBtn" title="Reset to default roles">↺ Reset</button>
                 <button class="outline" id="exportJsonBtn">📥 Export JSON</button>
                 <button class="outline" id="importJsonBtn">📂 Import JSON</button>
@@ -414,6 +447,7 @@
         <div class="actions">
             <button class="primary" id="addPanelBtn">+ Add Panel</button>
             <button id="copyScriptBtn">📋 Copy Userscript</button>
+            <button class="outline" id="editRolesBtn">📝 Edit Roles</button>
         </div>
 
         <div class="status" id="statusBar">
@@ -424,11 +458,11 @@
 
         <div class="footnote">
             Each panel opens a new browser tab. Arrange them manually (macOS: hold <kbd>⌥</kbd> while clicking the green window button).
-            <br>Roles are stored in <kbd>localStorage</kbd> and shared with the userscript. Edit them in the Role Editor.
+            <br>Roles are stored in <kbd>localStorage</kbd> and synced to GM storage if the userscript is active.
         </div>
     </div>
 
-    <!-- ─── ROLE EDITOR MODAL ──────────────────────────────────────────── -->
+    <!-- ─── ROLE EDITOR MODAL ────────────────────────────────────────────── -->
     <div class="modal-overlay hidden" id="roleEditorOverlay">
         <div class="modal-box">
             <h2>📝 Role Editor</h2>
@@ -470,7 +504,7 @@
             grok: 'Grok'
         };
 
-        // ─── DEFAULT STRICT ROLES (built‑in fallback) ──────────────────────
+        // ─── DEFAULT STRICT ROLES ────────────────────────────────────────────
         const DEFAULT_ROLES_DATA = [{
             name: 'Critical Reviewer',
             prompt: `You are the Critical Reviewer (Red Team). RULES: 1) Max 200 words. 2) ONLY list defects, edge cases, security flaws, performance bottlenecks. 3) DO NOT propose solutions or write code. 4) Stick EXACTLY to the provided code. 5) Flag only what is broken or missing. Format: Bullet points. No fluff.`
@@ -503,9 +537,7 @@
             prompt: `You are the DevOps Engineer. Manage infrastructure, CI/CD, deployment, monitoring. Ensure scalability, security. Max 200 words.`
         }];
 
-        const DEFAULT_NAMES = DEFAULT_ROLES_DATA.map(r => r.name);
-
-        // ─── ROLE LIBRARY STORAGE ─────────────────────────────────────────
+        // ─── ROLE STORAGE ──────────────────────────────────────────────────
         function loadRoleLibrary() {
             const stored = localStorage.getItem('laichat.roleLibrary');
             if (stored) {
@@ -514,20 +546,30 @@
                     if (Array.isArray(parsed) && parsed.length) return parsed;
                 } catch (_) {}
             }
-            // Merge defaults with any custom roles that might exist
             return JSON.parse(JSON.stringify(DEFAULT_ROLES_DATA));
         }
 
         function saveRoleLibrary(roles) {
             localStorage.setItem('laichat.roleLibrary', JSON.stringify(roles));
+            // Retry sync to GM storage up to 5 times, 200ms apart
+            let attempts = 0;
+            const trySync = () => {
+                if (typeof window.laichatSaveRoles === 'function') {
+                    window.laichatSaveRoles(roles);
+                    console.log('✅ Synced roles to GM storage');
+                } else {
+                    attempts++;
+                    if (attempts < 5) {
+                        setTimeout(trySync, 200);
+                    } else {
+                        console.warn('⚠️ GM storage sync not available after retries.');
+                    }
+                }
+            };
+            trySync();
         }
 
-        function getAllRoleNames() {
-            const lib = loadRoleLibrary();
-            return lib.map(r => r.name);
-        }
-
-        // ─── PANEL STATE ────────────────────────────────────────────────────
+        // ─── PANEL STATE ──────────────────────────────────────────────────
         let panels = [];
 
         function savePanels() {
@@ -553,14 +595,14 @@
             return 'panel-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
         }
 
-        // ─── RENDER UI ──────────────────────────────────────────────────────
+        // ─── RENDER UI ──────────────────────────────────────────────────
         const grid = document.getElementById('panelGrid');
         const statusText = document.getElementById('statusText');
         const statusDot = document.getElementById('statusDot');
         const statusMeta = document.getElementById('statusMeta');
 
         function renderPanels() {
-            const roles = getAllRoleNames();
+            const roles = loadRoleLibrary().map(r => r.name);
             grid.innerHTML = '';
             panels.forEach((p) => {
                 const card = document.createElement('div');
@@ -663,9 +705,9 @@
             statusMeta.textContent = new Date().toLocaleTimeString();
         }
 
-        // ─── ADD PANEL ──────────────────────────────────────────────────────
+        // ─── ADD PANEL ──────────────────────────────────────────────────
         document.getElementById('addPanelBtn').onclick = () => {
-            const roles = getAllRoleNames();
+            const roles = loadRoleLibrary().map(r => r.name);
             const defaultRole = roles[0] || 'Worker';
             const newPanel = {
                 id: generateId(),
@@ -678,7 +720,7 @@
             statusText.textContent = `✅ Added panel ${newPanel.id}`;
         };
 
-        // ─── ROLE EDITOR MODAL ─────────────────────────────────────────────
+        // ─── ROLE EDITOR ──────────────────────────────────────────────────
         const overlay = document.getElementById('roleEditorOverlay');
         const editorList = document.getElementById('roleEditorList');
 
@@ -740,7 +782,6 @@
         };
 
         document.getElementById('saveEditorBtn').onclick = () => {
-            // Gather data from the DOM directly to be safe
             const items = editorList.querySelectorAll('.role-editor-item');
             const newRoles = [];
             items.forEach(item => {
@@ -756,7 +797,7 @@
             }
             saveRoleLibrary(newRoles);
             overlay.classList.add('hidden');
-            renderPanels(); // refresh dropdowns
+            renderPanels();
             statusText.textContent = `✅ Saved ${newRoles.length} roles to library.`;
             statusDot.className = 'dot green';
             statusMeta.textContent = new Date().toLocaleTimeString();
@@ -767,7 +808,6 @@
             roles.push({ name: 'New Role', prompt: 'Describe your role...' });
             saveRoleLibrary(roles);
             renderEditor();
-            // Scroll to bottom
             editorList.scrollTop = editorList.scrollHeight;
         };
 
@@ -781,7 +821,7 @@
             }
         };
 
-        // ─── IMPORT / EXPORT JSON ──────────────────────────────────────────
+        // ─── IMPORT / EXPORT JSON ──────────────────────────────────────
         document.getElementById('exportJsonBtn').onclick = () => {
             const roles = loadRoleLibrary();
             const blob = new Blob([JSON.stringify(roles, null, 2)], { type: 'application/json' });
@@ -822,7 +862,7 @@
             e.target.value = ''; // reset
         };
 
-        // ─── RESET ROLES (global) ──────────────────────────────────────────
+        // ─── RESET ROLES (global) ──────────────────────────────────────
         document.getElementById('resetRolesBtn').onclick = () => {
             if (confirm('Reset all roles to default strict prompts? Custom roles will be lost.')) {
                 saveRoleLibrary(JSON.parse(JSON.stringify(DEFAULT_ROLES_DATA)));
@@ -832,7 +872,28 @@
             }
         };
 
-        // ─── COPY USERSCRIPT ──────────────────────────────────────────────
+        // ─── ADD CUSTOM ROLE (from input) ──────────────────────────────
+        document.getElementById('addRoleBtn').onclick = () => {
+            const input = document.getElementById('newRoleInput');
+            const roleName = input.value.trim();
+            if (!roleName) {
+                statusText.textContent = '⚠️ Please enter a role name.';
+                return;
+            }
+            const roles = loadRoleLibrary();
+            if (roles.find(r => r.name === roleName)) {
+                statusText.textContent = `⚠️ Role "${roleName}" already exists.`;
+                return;
+            }
+            roles.push({ name: roleName, prompt: `You are acting as the **${roleName}**. Be concise, direct, and only address what is explicitly asked. Do not add extra content. Max 200 words.` });
+            saveRoleLibrary(roles);
+            input.value = '';
+            renderPanels();
+            statusText.textContent = `✅ Added role "${roleName}"`;
+            statusDot.className = 'dot green';
+        };
+
+        // ─── COPY USERSCRIPT ────────────────────────────────────────────
         document.getElementById('copyScriptBtn').onclick = async () => {
             try {
                 const resp = await fetch('laichat-bridge.user.js');
@@ -864,7 +925,7 @@
             }
         };
 
-        // ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────
+        // ─── KEYBOARD SHORTCUTS ──────────────────────────────────────────
         document.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
                 e.preventDefault();
@@ -881,7 +942,7 @@
             }
         });
 
-        // ─── INIT ──────────────────────────────────────────────────────────
+        // ─── INIT ──────────────────────────────────────────────────────
         loadPanels();
         renderPanels();
         console.log('🧠 Laichat · ⌘A add panel  ⌘C copy script');

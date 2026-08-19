@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Laichat Bridge
 // @namespace    laichat
-// @version      0.6.0
-// @description  Full toolbar, compact, with single font-size variable.
+// @version      0.1.1
+// @description  Full toolbar; Hub sync + AI listener.
 // @match        https://chatgpt.com/*
 // @match        https://claude.ai/*
 // @match        https://gemini.google.com/*
@@ -12,16 +12,39 @@
 // @match        https://chat.minimaxi.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://grok.com/*
+// @match        file:///*
+// @match        http://localhost/*
+// @match        http://127.0.0.1/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_setClipboard
+// @grant        unsafeWindow
 // ==/UserScript==
 
 (() => {
     'use strict';
 
-    // ─── CONFIG ──────────────────────────────────────────────────────────
+    // ─── HUB BRIDGE ──────────────────────────────────────────────────────
+    if (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+        unsafeWindow.laichatSaveRoles = function(roles) {
+            try {
+                GM_setValue('laichat.roleLibrary', JSON.stringify(roles));
+                console.log('[Laichat] Roles saved to GM storage via Hub.');
+                return true;
+            } catch (e) {
+                console.error('[Laichat] Failed to save roles:', e);
+                return false;
+            }
+        };
+        unsafeWindow.laichatGetRoles = function() {
+            return GM_getValue('laichat.roleLibrary', null);
+        };
+        console.log('[Laichat] Hub bridge ready. Use window.laichatSaveRoles(roles)');
+        return;
+    }
+
+    // ─── AI PAGE CONFIG ──────────────────────────────────────────────────
 
     const HOST = location.hostname;
     const AI =
@@ -45,13 +68,9 @@
         grok: 'Grok'
     };
 
-    // ─── TOOLBAR SIZE CONTROL ──────────────────────────────────────────
-    // Change this one value to resize the entire toolbar
-    const TOOLBAR_FONT_SIZE = '11px';      // e.g., '10px', '12px', '14px'
-    const TOOLBAR_PADDING = '4px 8px';     // optional: adjust container padding
-    const BUTTON_PADDING = '2px 8px';      // optional: adjust button padding
-
-    // ─── DYNAMIC ROLE PROMPT (with consensus logic) ─────────────────────
+    const TOOLBAR_FONT_SIZE = '12px';
+    const TOOLBAR_PADDING = '6px 10px';
+    const BUTTON_PADDING = '4px 10px';
 
     const DEFAULT_ROLES_DATA = [{
         name: 'Critical Reviewer',
@@ -92,13 +111,22 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
 
     function loadRoleLibrary() {
         try {
-            const stored = localStorage.getItem('laichat.roleLibrary');
+            const stored = GM_getValue('laichat.roleLibrary', null);
             if (stored) {
                 const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed) && parsed.length) return parsed;
+                if (Array.isArray(parsed) && parsed.length) {
+                    const names = parsed.map(r => r.name);
+                    const merged = [...parsed];
+                    for (const def of DEFAULT_ROLES_DATA) {
+                        if (!names.includes(def.name)) {
+                            merged.push(def);
+                        }
+                    }
+                    return merged;
+                }
             }
         } catch (_) {}
-        return DEFAULT_ROLES_DATA;
+        return DEFAULT_ROLES_DATA.slice();
     }
 
     function getRolePrompt(role) {
@@ -461,7 +489,6 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
             }
         }
 
-        // Log candidates for debugging
         console.log('[Laichat] Candidate texts found:', candidates.map(c => c.slice(0, 60) + '...'));
 
         if (candidates.length) {
@@ -581,7 +608,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         }
     }
 
-    // ─── IMPROVED SUBMIT LOGIC (with correct "Run" button) ──────────────
+    // ─── IMPROVED SUBMIT LOGIC ──────────────────────────────────────────
 
     function submitInput() {
         const el = inputCandidates()[0];
@@ -593,42 +620,35 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         setTimeout(() => {
             let btn = null;
 
-            // 1. PRIMARY: Look for the correct "Run" submit button
             const allSubmitButtons = document.querySelectorAll('button[type="submit"]');
             for (const b of allSubmitButtons) {
                 const ariaLabel = b.getAttribute('aria-label') || '';
-                if (ariaLabel.toLowerCase().includes('toggle run settings')) {
-                    continue;
-                }
+                if (ariaLabel.toLowerCase().includes('toggle run settings')) continue;
                 if (b.querySelector('span.run-button-label')) {
                     btn = b;
                     break;
                 }
             }
 
-            // 2. If not found, look for any button whose trimmed text is exactly "Run" (or "▶ Run")
             if (!btn) {
                 const allButtons = document.querySelectorAll('button');
                 for (const b of allButtons) {
                     const text = b.innerText.trim().toLowerCase();
                     if (text === 'run' || text === '▶ run' || text === 'run ▶') {
                         const ariaLabel = b.getAttribute('aria-label') || '';
-                        if (ariaLabel.toLowerCase().includes('toggle run settings')) {
-                            continue;
-                        }
+                        if (ariaLabel.toLowerCase().includes('toggle run settings')) continue;
                         btn = b;
                         break;
                     }
                 }
             }
 
-            // 3. Fallback: generic send/submit patterns
             if (!btn) {
                 const form = el.closest('form');
                 if (form) {
                     btn = form.querySelector('button[type="submit"]');
                     if (!btn) {
-                        btn = form.querySelector('button[aria-label*="Send"], button[aria-label*="Submit"], button[data-testid*="send"], button[class*="send"], button[class*="submit"]');
+                        btn = form.querySelector('button[aria-label*="Send"], button[aria-label*="Submit"], button[data-testid*="send"], button[class*="send"], button[class*="submit"], .ds-button[aria-label*="Send"]');
                     }
                 }
                 if (!btn) {
@@ -655,7 +675,6 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
                 return;
             }
 
-            // 4. If no button, simulate Enter key
             console.log('[Laichat] No submit button found, simulating Enter key.');
             el.focus();
             const events = [
@@ -677,7 +696,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         return true;
     }
 
-    // ─── SEND TO PROGRAMMER (auto‑target) ─────────────────────────────
+    // ─── SEND TO PROGRAMMER ─────────────────────────────────────────────
 
     function sendToProgrammer() {
         const registry = getRegistry();
@@ -794,7 +813,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         el._t = setTimeout(() => el.remove(), 5000);
     }
 
-    // ─── SHOW MESSAGE IN MODAL (fallback) ──────────────────────────────
+    // ─── SHOW MESSAGE IN MODAL ──────────────────────────────────────────
 
     function showMessageModal(text) {
         const overlay = document.createElement('div');
@@ -839,10 +858,10 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     }
 
-    // ─── ROLE LIBRARY MODAL (Settings) ──────────────────────────────────
+    // ─── ROLE LIBRARY MODAL ─────────────────────────────────────────────
 
     function showRoleLibraryModal() {
-        const current = localStorage.getItem('laichat.roleLibrary') || '';
+        const current = GM_getValue('laichat.roleLibrary', '');
         let displayText = '';
         if (current) {
             try {
@@ -891,10 +910,19 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         saveBtn.onclick = () => {
             try {
                 const parsed = JSON.parse(textarea.value);
-                localStorage.setItem('laichat.roleLibrary', JSON.stringify(parsed));
+                GM_setValue('laichat.roleLibrary', JSON.stringify(parsed));
                 toast('✅ Role library saved!');
                 close();
-                if (roleSelect) refreshRoleDropdown();
+                if (roleSelect) {
+                    refreshRoleDropdown();
+                    if (roleSelect.value && roleSelect.value !== 'Custom...') {
+                        MY_ROLE = roleSelect.value;
+                        sessionStorage.setItem('laichat_role', MY_ROLE);
+                        localStorage.setItem('laichat_role', MY_ROLE);
+                        registerSelf();
+                        injectRolePrompt(true);
+                    }
+                }
             } catch (e) {
                 toast('❌ Invalid JSON: ' + e.message);
             }
@@ -903,7 +931,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     }
 
-    // ─── FULL TOOLBAR (with global font-size) ───────────────────────────
+    // ─── TOOLBAR ─────────────────────────────────────────────────────────
 
     let toolbarBox = null;
     let roleSelect = null;
@@ -947,20 +975,48 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
 
     function refreshRoleDropdown() {
         if (!roleSelect) return;
-        const currentVal = roleSelect.value;
+        const currentValue = roleSelect.value || MY_ROLE;
         const options = getRoleOptions();
+
+        const keepValue = currentValue;
+
         while (roleSelect.firstChild) roleSelect.removeChild(roleSelect.firstChild);
         for (const r of options) {
             const opt = document.createElement('option');
             opt.value = r;
             opt.textContent = r;
-            if (r === currentVal) opt.selected = true;
+            if (r === keepValue) opt.selected = true;
             roleSelect.appendChild(opt);
         }
         const customOpt = document.createElement('option');
         customOpt.value = 'Custom...';
         customOpt.textContent = 'Custom...';
         roleSelect.appendChild(customOpt);
+
+        if (!options.includes(keepValue) && keepValue && keepValue !== 'Custom...') {
+            const tempOpt = document.createElement('option');
+            tempOpt.value = keepValue;
+            tempOpt.textContent = keepValue + ' (current)';
+            tempOpt.selected = true;
+            roleSelect.insertBefore(tempOpt, roleSelect.firstChild);
+        }
+
+        if (roleSelect.value !== keepValue && keepValue && keepValue !== 'Custom...') {
+            for (const opt of roleSelect.options) {
+                if (opt.value === keepValue) {
+                    opt.selected = true;
+                    break;
+                }
+            }
+        }
+
+        const newVal = roleSelect.value;
+        if (newVal && newVal !== 'Custom...') {
+            MY_ROLE = newVal;
+            sessionStorage.setItem('laichat_role', MY_ROLE);
+            localStorage.setItem('laichat_role', MY_ROLE);
+        }
+        console.log('[Laichat] Role dropdown refreshed – count:', roleSelect.options.length, 'current:', roleSelect.value);
     }
 
     function refreshTargets() {
@@ -991,6 +1047,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         if (currentVal && targetSelect.querySelector(`option[value="${currentVal}"]`)) {
             targetSelect.value = currentVal;
         }
+        console.log('[Laichat] Target dropdown refreshed – count:', targetSelect.options.length);
     }
 
     function buildToolbar() {
@@ -1009,10 +1066,10 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
                 left: '12px',
                 zIndex: 2147483647,
                 display: 'flex',
-                gap: '4px',
+                gap: '6px',
                 padding: TOOLBAR_PADDING,
                 background: '#151a21ee',
-                border: '1px solid #394452',
+                border: '2px solid #58a6ff',
                 borderRadius: '8px',
                 backdropFilter: 'blur(6px)',
                 alignItems: 'center',
@@ -1029,24 +1086,30 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
             // Role dropdown
             roleSelect = document.createElement('select');
             roleSelect.style.cssText =
-                `background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:2px 4px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;max-width:100px;`;
+                `background:#0d1117;color:#e6edf3;border:1px solid #58a6ff;border-radius:4px;padding:4px 6px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;max-width:120px;min-width:80px;`;
             refreshRoleDropdown();
+
             roleSelect.onchange = () => {
                 const newRole = roleSelect.value;
                 if (newRole === 'Custom...') {
                     const custom = prompt('Enter custom role name:', MY_ROLE);
                     if (custom && custom.trim() !== '') {
                         const trimmed = custom.trim();
+                        const lib = loadRoleLibrary();
+                        if (!lib.find(r => r.name === trimmed)) {
+                            lib.push({ name: trimmed, prompt: `You are acting as the **${trimmed}**. Be concise, direct, and only address what is explicitly asked. Do not add extra content. Max 200 words.` });
+                            GM_setValue('laichat.roleLibrary', JSON.stringify(lib));
+                        }
                         MY_ROLE = trimmed;
                         sessionStorage.setItem('laichat_role', MY_ROLE);
                         localStorage.setItem('laichat_role', MY_ROLE);
-                        registerSelf();
-                        injectRolePrompt(true);
-                        toast(`✅ Role updated to "${MY_ROLE}"`);
                         refreshRoleDropdown();
                         for (const opt of roleSelect.options) {
                             if (opt.value === trimmed) { opt.selected = true; break; }
                         }
+                        registerSelf();
+                        injectRolePrompt(true);
+                        toast(`✅ Role updated to "${MY_ROLE}"`);
                     } else {
                         roleSelect.value = MY_ROLE;
                     }
@@ -1065,7 +1128,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
             targetSelect = document.createElement('select');
             targetSelect.id = 'laichat-target';
             targetSelect.style.cssText =
-                `background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:2px 4px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;max-width:100px;`;
+                `background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:4px 6px;font-size:${TOOLBAR_FONT_SIZE};cursor:pointer;max-width:120px;min-width:80px;`;
             refreshTargets();
             box.appendChild(targetSelect);
 
@@ -1086,7 +1149,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
             sendBtn.onclick = () => sendCurrent(targetSelect.value, false);
             box.appendChild(sendBtn);
 
-            // Send+Submit button
+            // Send+Submit
             const sendSubmitBtn = document.createElement('button');
             sendSubmitBtn.textContent = 'Send+Submit';
             Object.assign(sendSubmitBtn.style, {
@@ -1103,7 +1166,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
             sendSubmitBtn.onclick = () => sendCurrent(targetSelect.value, true);
             box.appendChild(sendSubmitBtn);
 
-            // Programmer button
+            // Programmer
             const programmerBtn = document.createElement('button');
             programmerBtn.textContent = '👨‍💻 Prog.';
             Object.assign(programmerBtn.style, {
@@ -1121,7 +1184,7 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
             programmerBtn.onclick = sendToProgrammer;
             box.appendChild(programmerBtn);
 
-            // Refresh button
+            // Refresh targets
             const refreshBtn = document.createElement('button');
             refreshBtn.textContent = '↻';
             Object.assign(refreshBtn.style, {
@@ -1133,11 +1196,39 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
                 fontSize: TOOLBAR_FONT_SIZE,
                 cursor: 'pointer'
             });
-            refreshBtn.title = 'Refresh panel list';
-            refreshBtn.onclick = () => { refreshTargets(); toast('↻ Refreshed'); };
+            refreshBtn.title = 'Refresh targets';
+            refreshBtn.onclick = () => { refreshTargets(); toast('↻ Targets refreshed'); };
             box.appendChild(refreshBtn);
 
-            // Settings button
+            // Reload roles
+            const reloadRolesBtn = document.createElement('button');
+            reloadRolesBtn.textContent = '🔄';
+            Object.assign(reloadRolesBtn.style, {
+                background: '#21262d',
+                color: '#c9d1d9',
+                border: 0,
+                borderRadius: '4px',
+                padding: '2px 6px',
+                fontSize: TOOLBAR_FONT_SIZE,
+                cursor: 'pointer'
+            });
+            reloadRolesBtn.title = 'Reload roles from storage';
+            reloadRolesBtn.onclick = () => {
+                const lib = loadRoleLibrary();
+                console.log('[Laichat] Reloaded roles:', lib.map(r => r.name));
+                refreshRoleDropdown();
+                if (roleSelect && roleSelect.value && roleSelect.value !== 'Custom...') {
+                    MY_ROLE = roleSelect.value;
+                    sessionStorage.setItem('laichat_role', MY_ROLE);
+                    localStorage.setItem('laichat_role', MY_ROLE);
+                    registerSelf();
+                    injectRolePrompt(true);
+                }
+                toast('🔄 Roles reloaded');
+            };
+            box.appendChild(reloadRolesBtn);
+
+            // Settings
             const settingsBtn = document.createElement('button');
             settingsBtn.textContent = '⚙️';
             settingsBtn.title = 'Import Role Library (JSON)';
@@ -1161,7 +1252,25 @@ If the incoming message does **not** contain the line "=== IMPLEMENTATION TASK P
         }
     }
 
-    // ─── LISTENER ─────────────────────────────────────────────────────────
+    // ─── ROLE LIBRARY LISTENER ─────────────────────────────────────────
+
+    GM_addValueChangeListener('laichat.roleLibrary', (key, oldVal, newVal, remote) => {
+        if (remote && newVal) {
+            if (roleSelect) {
+                refreshRoleDropdown();
+                if (roleSelect.value && roleSelect.value !== 'Custom...') {
+                    MY_ROLE = roleSelect.value;
+                    sessionStorage.setItem('laichat_role', MY_ROLE);
+                    localStorage.setItem('laichat_role', MY_ROLE);
+                    registerSelf();
+                    injectRolePrompt(true);
+                }
+            }
+            console.log('[Laichat] Role library changed – dropdown updated.');
+        }
+    });
+
+    // ─── INBOX LISTENER ────────────────────────────────────────────────
 
     const myInboxKey = INBOX_PREFIX + MY_ID;
     GM_addValueChangeListener(myInboxKey, (_k, _old, newVal, remote) => {
